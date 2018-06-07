@@ -73,7 +73,6 @@
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="Utilities.fs" />
     <Compile Include="Mutable.fs" />
-    <Compile Include="Validate.fs" />
     <Compile Include="Signal.fs" />
     <Compile Include="Observable.fs" />
     <Compile Include="Memory.fs" />

@@ -52,16 +52,6 @@ module Observable =
                     disp :> IDisposable
         }
 
-    /// Maps the input observable through an async workflow. Execution status is reported through the specified IdleTracker.
-    let mapAsyncTracked (mapping : 'a -> Async<'b>) (tracker : IdleTracker) (provider : IObservable<'a>) =
-        let trackingMap v =
-            async {
-                use _execHandle = tracker.GetExecutionHandle()
-                let! result = mapping v
-                return result               
-            }
-        mapAsync trackingMap provider
-
     module Subscription =
         /// Create a subscription to an observable which copies its value upon change into a mutable
         let copyTo (target : IMutatable<'a>) (provider : IObservable<'a>) =            

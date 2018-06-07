@@ -13,10 +13,6 @@ module Mutable =
     let createThreadsafe<'a when 'a : not struct> (value : 'a) = 
         new AtomicMutable<'a>(value) :> IAtomicMutatable<'a>
 
-    /// Create an asynchronous mutable variable wrapping an initial value
-    let createAsync (value : 'a) = 
-        new AsyncMutable<'a>(value) :> IAsyncMutatable<'a>
-
     /// Gets the value associated with the mutatable object
     let get (mutatable : IMutatable<'a>) = 
         mutatable.Value

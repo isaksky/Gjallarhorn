@@ -6,6 +6,8 @@ open Gjallarhorn.Internal
 
 open System
 open NUnit.Framework
+open System.Threading.Tasks
+open System.Threading
 
 let mutable culture : System.Globalization.CultureInfo = null
 
@@ -129,59 +131,6 @@ let ``Signal updates with signal`` start initialView finish finalView =
     result.Value <- finish
     Assert.AreEqual(view.Value, finalView)
     Assert.AreEqual(backView.Value, finish)
-
-[<Test;TestCaseSource(typeof<Utilities>,"CasesStartEndToStringPairs")>]
-let ``Cached View updates with View`` start initialView finish finalView =
-    // Create a mutable value
-    let result = Mutable.create start
-    
-    // Create a view to turn the value from int -> string
-    let view = Signal.map (fun i -> i.ToString()) result
-    
-    // Create a view to turn the first view back from string -> int
-    let bv = Signal.map (fun s -> Convert.ChangeType(s, start.GetType())) view
-
-    // Cache the view
-    let backView = Signal.cache bv
-    
-    Assert.AreEqual(view.Value, initialView)
-    Assert.AreEqual(backView.Value, start)
-    
-    result.Value <- finish
-    Assert.AreEqual(view.Value, finalView)
-    Assert.AreEqual(backView.Value, finish)
-
-[<Test>]
-let ``Signal\filter doesn't propogate inappropriate changes`` () =
-    let v = Mutable.create 1
-    let view = Signal.map (fun i -> 10*i) v
-
-    let filter = 
-        view 
-        |> Signal.filter (fun i -> i < 100) view.Value
-
-    Assert.AreEqual(10, filter.Value)
-
-    v.Value <- 5
-    Assert.AreEqual(50, filter.Value)
-
-    v.Value <- 25
-    Assert.AreEqual(50, filter.Value)
-
-[<Test>]
-let ``Signal\choose doesn't propogate inappropriate changes`` () =
-    let v = Mutable.create 1
-    let view = Signal.map (fun i -> 10*i) v
-
-    let filter = Signal.choose (fun i -> if i < 100 then Some(i) else None) view.Value view
-
-    Assert.AreEqual(10, filter.Value)
-
-    v.Value <- 5
-    Assert.AreEqual(50, filter.Value)
-
-    v.Value <- 25
-    Assert.AreEqual(50, filter.Value)   
 
 [<Test>]
 let ``Signal\map3 propogates successfully`` () =
@@ -503,59 +452,107 @@ let ``Issue #16 - Signal.map evaluations - With Subscription`` () =
     printfn "y = %A" y.Value // nothing
     Assert.AreEqual("**", sw.ToString())
 
+[<Test>]
+let ``Signal\map - Dirty propogation is correct`` () =
+    let m1 = Mutable.createThreadsafe (box -1)
+    let s1 = m1 |> Signal.map (fun i -> (i :?> int) + 1)
+
+    let incr_task =
+      Task.Factory.StartNew
+        (fun () ->
+          for i = 0 to 100000 do
+            m1.Update (fun o -> box (o :?> int + 1)) |> ignore
+            //m1.Value <- i
+            )
+    
+    let mutable failures = 0
+    let mutable correct = 0
+    let mutable correct_race = 0
+
+    let read_tasks =
+      [| for i = 0 to 4 do 
+           yield Task.Factory.StartNew
+                    (fun () ->
+                      for j = 0 to 10000 do
+                        let m = m1.Value :?> int
+                        let s = s1.Value
+                        if s = m + 1 then
+                            Interlocked.Increment(&correct)|> ignore
+                        elif s > m then
+                            // "m" must have been incremented by the time we read "s"
+                            // , but as long as it is higher, it is still correct,
+                            // since we only increment
+                            Interlocked.Increment(&correct_race)|> ignore
+                        else
+                            Interlocked.Increment(&failures) |> ignore
+ 
+                        )
+        |]
+
+    incr_task.Wait()
+
+    Task.WaitAll(read_tasks)
+
+    Assert.AreEqual(0, failures)
+    Assert.AreEqual(1., (float correct_race) / (float (failures + correct_race)))
+
+[<Test>]
+let ``Signal\map2 - Dirty propogation is correct`` () =
+    let m1 = Mutable.createThreadsafe (box -1)
+    let m2 = Mutable.createThreadsafe (box -1)
+    let s1 = (m1, m2) ||> Signal.map2 (fun i j -> (i :?> int) + (j :?> int) + 1)
+
+    let incr_task =
+      Task.Factory.StartNew
+        (fun () ->
+          for i = 0 to 100000 do
+            match i % 2 with
+            | 0 -> m1.Update (fun o -> box (o :?> int + 1)) |> ignore
+            | 1 -> m2.Update (fun o -> box (o :?> int + 1)) |> ignore
+            | _ -> failwith "Logic error"
+            )
+    
+    let mutable failures = 0
+    let mutable correct = 0
+    let mutable correct_race = 0
+
+    let read_tasks =
+      [| for i = 0 to 4 do 
+           yield Task.Factory.StartNew
+                    (fun () ->
+                      for j = 0 to 10000 do
+                        let i = m1.Value :?> int
+                        let j = m2.Value :?> int
+                        let s = s1.Value
+                        if s = i + j + 1 then
+                            Interlocked.Increment(&correct)|> ignore
+                        elif s > (i + j) then
+                            // "i" or "j" must have been incremented by the time we read "s",
+                            // but as long as it is higher, it is still correct,
+                            // since we only increment
+                            Interlocked.Increment(&correct_race)|> ignore
+                        else
+                            Interlocked.Increment(&failures) |> ignore
+ 
+                        )
+        |]
+
+    incr_task.Wait()
+
+    Task.WaitAll(read_tasks)
+
+    Assert.AreEqual(0, failures)
+    Assert.AreEqual(1., (float correct_race) / (float (failures + correct_race)))
+
 type Msg =
 | Update of int
 
 [<Test>]
-let ``Async mutables functions as mutable`` () =
-    let update msg state =
-        match msg with
-        | Update(newValue) -> newValue
-
-    let state = Mutable.createAsync 0
-
-    let m = state :> IMutatable<_>
-
-    Assert.AreEqual(0, m.Value)
-
-    m.Value <- 3
-    Assert.AreEqual(3, m.Value)
-
-    Update(5) |> update |> state.Update |> ignore
-    Assert.AreEqual(5, m.Value)
-
-[<Test>]
-let ``Async mutables propogates changes properly`` () =
-    let update msg state =
-        match msg with
-        | Update(newValue) -> newValue
-
-    let state = Mutable.createAsync 0 
-
-    let m = state :> IMutatable<_>
-
-    let sign = state |> Signal.map (fun v -> v * 10)
-
-    let mutable value = sign.Value
-
-    use __ = sign |> Observable.subscribe (fun v -> value <- v)
-
-    Assert.AreEqual(0, m.Value)
-
-    m.Value <- 3
-    Assert.AreEqual(3, m.Value)
-
-    Update(5) |> update |> state.Update |> ignore
-    Assert.AreEqual(5, m.Value)
-
-    Assert.AreEqual(50, value)
-
-[<Test>]
 let ``Signal\map which throws is able to be handled`` () =
     try
-        let value = Mutable.create 1
+        let value = Mutable.createThreadsafe (box 1)
         let final = value |> Signal.map (fun _ -> failwith "...")
-        value.Value <- 5
+        value.Value <- box 5
         printfn "%A" final.Value
     with
     | _ as exp -> printfn "%A" exp.Message
@@ -576,51 +573,3 @@ type TestSyncContext () =
 
     member __.Runs = !runs
 
-[<Test>]
-let ``Signal\cache pushes through subscriptions properly`` () =
-    let input = Mutable.create 0
-
-    let result = input |> Signal.cache
-
-    let subCnt = ref 0
-    use _sub = result |> Signal.Subscription.create (fun v -> 
-                            printfn "Sub %d" v
-                            incr subCnt
-                            )
-
-    input.Value <- 42
-
-    Assert.AreEqual(42, result.Value)
-    Assert.AreEqual(1, !subCnt)
-
-[<Test>]
-let ``Signal\mapAsync pushes onto proper context`` () =
-    let input = Mutable.create 0
-
-    let ctx = TestSyncContext()
-
-    let op input = async {            
-            do! Async.Sleep 10
-            printfn "Running..."
-            do! Async.SwitchToContext ctx
-            return [| input + 1 |]
-        }
-
-    let result =
-        input
-        |> Signal.mapAsync op [| -1 |]
-
-    let subCnt = ref 0
-    use _sub = result |> Signal.Subscription.create (fun v -> 
-                            printfn "Sub %A" v
-                            incr subCnt
-                            )
-
-    input.Value <- 41
-
-    System.Threading.Thread.Sleep 250
-
-    Assert.AreEqual([ 42 ], result.Value)
-    Assert.AreEqual(2, ctx.Runs)
-    Assert.AreEqual(1, !subCnt)
-            
