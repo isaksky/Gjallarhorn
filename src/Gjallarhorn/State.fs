@@ -10,13 +10,10 @@ type AtomicMutable<'a when 'a : not struct>(value : 'a) as self =
     let deps = Dependencies.create [||] self
     let swap (f : 'a -> 'a) =
         lock deps <| fun _ ->
-            let sw = SpinWait()        
-            let mutable current = v
-            while not ( obj.ReferenceEquals(Interlocked.CompareExchange<'a>(&v, f current, current), current) ) do
-                sw.SpinOnce()            
-                current <- v
+            let v2 = f v
+            v <- v2
             deps.MarkDirty self
-            v
+            v2
 
     let setValue value =
         swap (fun _ -> value) |> ignore
