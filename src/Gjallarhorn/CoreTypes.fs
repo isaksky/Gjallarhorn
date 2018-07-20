@@ -154,15 +154,17 @@ type MappingSignal<'a,'b when 'a : equality and 'b : equality>(valueProvider : I
     member this.Value 
         with get() : 'b = 
             lock dependencies <| fun _ ->
-                let input = DisposeHelpers.getValue valueProvider (fun _ -> this.GetType().FullName)
-                if lastInput <> input then
-                    lastInput <- input
-                    let value = lastInput |> mapping
-                    if lastValue <> value then
-                        lastValue <- value
-                    value
-                else
-                    lastValue
+                if dirty then
+                    let input = DisposeHelpers.getValue valueProvider (fun _ -> this.GetType().FullName)
+                    if lastInput <> input then
+                        lastInput <- input
+                        let value = lastInput |> mapping
+                        if lastValue <> value then
+                            lastValue <- value
+                        value
+                    else
+                        lastValue
+                else lastValue
 
     member __.Dirty 
         with get() = lock dependencies (fun _ -> dirty) 
@@ -226,16 +228,19 @@ type internal Mapping2Signal<'a,'b,'c when 'a : equality and 'b : equality and '
     member this.Value 
         with get() : 'c  = 
             lock dependencies <| fun _ ->
-                let input1 = DisposeHelpers.getValue valueProvider1 (fun _ -> this.GetType().FullName)
-                let input2 = DisposeHelpers.getValue valueProvider2 (fun _ -> this.GetType().FullName)
-                if lastInput1 <> input1 || lastInput2 <> input2 then
-                    lastInput1 <- input1
-                    lastInput2 <- input2
-                    let value = mapping input1 input2
-                    if lastValue <> value then
-                        lastValue <- value
-                        this.MarkDirty (this :> obj)
-                    value
+                if dirty then
+                    let input1 = DisposeHelpers.getValue valueProvider1 (fun _ -> this.GetType().FullName)
+                    let input2 = DisposeHelpers.getValue valueProvider2 (fun _ -> this.GetType().FullName)
+                    if lastInput1 <> input1 || lastInput2 <> input2 then
+                        lastInput1 <- input1
+                        lastInput2 <- input2
+                        let value = mapping input1 input2
+                        if lastValue <> value then
+                            lastValue <- value
+                            this.MarkDirty (this :> obj)
+                        value
+                    else
+                        lastValue
                 else
                     lastValue
 
